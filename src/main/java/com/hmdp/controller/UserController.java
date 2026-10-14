@@ -15,11 +15,18 @@ import com.hmdp.utils.MailUtils;
 import com.hmdp.utils.RegexUtils;
 import com.hmdp.utils.UserHolder;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
 import javax.mail.MessagingException;
 import javax.servlet.http.HttpSession;
+import java.util.HashMap;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+
+import static com.hmdp.utils.RedisConstants.*;
 
 /**
  * <p>
@@ -42,6 +49,9 @@ public class UserController {
     @Resource
     private MailUtils mailUtils;
 
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
+
     /**
      * 发送手机验证码
      */
@@ -52,7 +62,7 @@ public class UserController {
             return Result.fail("邮箱格式不正确");
         }
         String code = MailUtils.achieveCode();
-        session.setAttribute(phone, code);
+        stringRedisTemplate.opsForValue().set(LOGIN_CODE_KEY + phone, code, LOGIN_CODE_TTL, TimeUnit.MINUTES);
         log.info("发送登录验证码：{}", code);
         try {
             mailUtils.sendTestMail(phone, code);   // 改成实例调用
@@ -75,8 +85,8 @@ public class UserController {
         String phone = loginForm.getPhone();
         //获取登录验证码
         String code = loginForm.getCode();
-        //获取session中的验证码
-        Object cacheCode = session.getAttribute(phone);
+        //获取Redis中的验证码
+        String sessionCode = stringRedisTemplate.opsForValue().get(LOGIN_CODE_KEY + phone);
 
         //1. 校验邮箱
         if (RegexUtils.isEmailInvalid(phone)) {
@@ -84,8 +94,8 @@ public class UserController {
             return Result.fail("邮箱格式不正确！！");
         }
         //3. 校验验证码
-        log.info("code:{},cacheCode{}", code, cacheCode);
-        if (code == null || !cacheCode.toString().equals(code)) {
+        log.info("code:{},cacheCode{}", code, sessionCode);
+        if (code == null || !sessionCode.equals(code)) {
             //4. 不一致则报错
             return Result.fail("验证码不一致！！");
         }
@@ -98,9 +108,24 @@ public class UserController {
             // 创建的逻辑封装成了一个方法
             user = createUserWithPhone(phone);
         }
-        //7. 保存用户信息到session中
-        session.setAttribute("user", user);
-        return Result.ok();
+        //7. 保存用户信息到Redis中
+        //7.1 随机生成token，作为登录令牌
+        String token = UUID.randomUUID().toString();
+        //7.2 将UserDto对象转为HashMap存储
+        UserDTO userDTO = BeanUtil.copyProperties(user, UserDTO.class);
+        HashMap<String, String > userMap = new HashMap<>();
+        userMap.put("icon", userDTO.getIcon());
+        userMap.put("id", String.valueOf(userDTO.getId()));
+        userMap.put("nickName", userDTO.getNickName(    ));
+        //7.3 存储
+        String tokenKey = LOGIN_USER_KEY + token;
+        stringRedisTemplate.opsForHash().putAll(tokenKey, userMap);
+        //7.4 设置token有效期为30分钟
+        stringRedisTemplate.expire(tokenKey, 30, TimeUnit.MINUTES);
+        //7.5 登陆成功则删除验证码信息
+        stringRedisTemplate.delete(LOGIN_CODE_KEY + phone);
+
+        return Result.ok(token);
     }
     private User createUserWithPhone(String phone) {
         //创建用户
