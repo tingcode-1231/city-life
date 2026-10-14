@@ -17,6 +17,9 @@
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
+SET SESSION sql_mode = 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
+USE hmdp;
+
 -- ----------------------------
 -- Table structure for tb_blog
 -- ----------------------------
@@ -185,6 +188,7 @@ CREATE TABLE `tb_user`  (
   UNIQUE INDEX `uniqe_key_phone`(`phone`) USING BTREE
 ) ENGINE = InnoDB AUTO_INCREMENT = 1010 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = Compact;
 
+ALTER TABLE tb_user MODIFY COLUMN phone VARCHAR(100) NOT NULL COMMENT '邮箱';
 -- ----------------------------
 -- Records of tb_user
 -- ----------------------------

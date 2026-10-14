@@ -2,6 +2,8 @@ package com.hmdp.controller;
 
 
 import cn.hutool.core.bean.BeanUtil;
+import cn.hutool.core.util.RandomUtil;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.hmdp.dto.LoginFormDTO;
 import com.hmdp.dto.Result;
 import com.hmdp.dto.UserDTO;
@@ -9,11 +11,14 @@ import com.hmdp.entity.User;
 import com.hmdp.entity.UserInfo;
 import com.hmdp.service.IUserInfoService;
 import com.hmdp.service.IUserService;
+import com.hmdp.utils.MailUtils;
+import com.hmdp.utils.RegexUtils;
 import com.hmdp.utils.UserHolder;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
+import javax.mail.MessagingException;
 import javax.servlet.http.HttpSession;
 
 /**
@@ -34,23 +39,79 @@ public class UserController {
     @Resource
     private IUserInfoService userInfoService;
 
+    @Resource
+    private MailUtils mailUtils;
+
     /**
      * 发送手机验证码
      */
-    @PostMapping("code")
+    @PostMapping("/code")
     public Result sendCode(@RequestParam("phone") String phone, HttpSession session) {
-        // 发送短信验证码并保存验证码
-        return userService.sendCode(phone, session);
+        // TODO 发送短信验证码并保存验证码
+        if (RegexUtils.isEmailInvalid(phone)) {
+            return Result.fail("邮箱格式不正确");
+        }
+        String code = MailUtils.achieveCode();
+        session.setAttribute(phone, code);
+        log.info("发送登录验证码：{}", code);
+        try {
+            mailUtils.sendTestMail(phone, code);   // 改成实例调用
+        } catch (MessagingException e) {
+            log.error("发送邮件失败", e);
+            return Result.fail("验证码发送失败，请稍后重试");
+        }
+        return Result.ok();
     }
 
     /**
      * 登录功能
+     *
      * @param loginForm 登录参数，包含手机号、验证码；或者手机号、密码
      */
     @PostMapping("/login")
-    public Result login(@RequestBody LoginFormDTO loginForm, HttpSession session){
-        // 实现登录功能
-        return userService.login(loginForm, session);
+    public Result login(@RequestBody LoginFormDTO loginForm, HttpSession session) {
+        // TODO 实现登录功能
+        //获取登录账号
+        String phone = loginForm.getPhone();
+        //获取登录验证码
+        String code = loginForm.getCode();
+        //获取session中的验证码
+        Object cacheCode = session.getAttribute(phone);
+
+        //1. 校验邮箱
+        if (RegexUtils.isEmailInvalid(phone)) {
+            //2. 不符合格式则报错
+            return Result.fail("邮箱格式不正确！！");
+        }
+        //3. 校验验证码
+        log.info("code:{},cacheCode{}", code, cacheCode);
+        if (code == null || !cacheCode.toString().equals(code)) {
+            //4. 不一致则报错
+            return Result.fail("验证码不一致！！");
+        }
+        //5. 根据账号查询用户是否存在
+        LambdaQueryWrapper<User> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper.eq(User::getPhone, phone);
+        User user = userService.getOne(queryWrapper);
+        //6. 如果不存在则创建
+        if (user == null) {
+            // 创建的逻辑封装成了一个方法
+            user = createUserWithPhone(phone);
+        }
+        //7. 保存用户信息到session中
+        session.setAttribute("user", user);
+        return Result.ok();
+    }
+    private User createUserWithPhone(String phone) {
+        //创建用户
+        User user = new User();
+        //设置手机号
+        user.setPhone(phone);
+        //设置昵称(默认名)，一个固定前缀+随机字符串
+        user.setNickName("user_" + RandomUtil.randomString(8));
+        //保存到数据库
+        userService.save(user);
+        return user;
     }
 
     /**
